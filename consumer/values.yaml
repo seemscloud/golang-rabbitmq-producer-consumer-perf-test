@@ -1,0 +1,90 @@
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+replicaCount: 20
+
+rabbitmq:
+  host: rabbitmq-general
+  port: 5673
+  username: admin
+  password: admin
+  vhost: /
+  queue: benchmark
+  queuePartitions: 25
+  messages: 0
+
+extraEnvVars:
+  - name: GOMAXPROCS
+    value: "1"
+
+image:
+  registry: docker.io
+  repository: golang
+  tag: "1.22"
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+serviceAccount:
+  create: false
+  name: rabbitmq-general
+  automountServiceAccountToken: true
+  annotations: {}
+
+commonLabels: {}
+commonAnnotations: {}
+
+podAnnotations:
+  sidecar.istio.io/inject: "false"
+
+podLabels: {}
+
+podSecurityContext: {}
+  # fsGroup: 1001
+  # runAsUser: 1001
+  # runAsNonRoot: true
+
+containerSecurityContext: {}
+  # allowPrivilegeEscalation: false
+  # readOnlyRootFilesystem: true
+
+nodeSelector:
+  node-role.kubernetes.io/katana-prod: ""
+
+tolerations:
+  - key: "node-role.kubernetes.io/katana-prod"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+affinity: {}
+
+resources:
+  requests:
+    cpu: "3"
+    memory: 1Gi
+  limits:
+    cpu: "9"
+    memory: 8Gi
+
+connectionTimeout: 5s
+
+
+extraEnvVarsCM: ""
+extraEnvVarsSecret: ""
+
+volumeMounts: []
+
+volumes: []
+
+
+# Pod-level graceful shutdown period
+terminationGracePeriodSeconds: 1
+
+# Deployment strategy
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 100%
+    maxSurge: 0%
+

@@ -1,0 +1,158 @@
+apiVersion: {{ include "common.capabilities.deployment.apiVersion" . }}
+kind: Deployment
+metadata:
+  name: {{ include "common.names.fullname" . }}
+  labels:
+    {{- include "common.labels.standard" . | nindent 4 }}
+    {{- if .Values.commonLabels }}
+    {{- include "common.tplvalues.render" (dict "value" .Values.commonLabels "context" $) | nindent 4 }}
+    {{- end }}
+  {{- if .Values.commonAnnotations }}
+  annotations:
+    {{- include "common.tplvalues.render" (dict "value" .Values.commonAnnotations "context" $) | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "common.labels.matchLabels" . | nindent 6 }}
+  strategy:
+    type: {{ .Values.deploymentStrategy.type | default "RollingUpdate" }}
+    {{- if eq (.Values.deploymentStrategy.type | default "RollingUpdate") "RollingUpdate" }}
+    rollingUpdate:
+      maxUnavailable: {{ default "100%" .Values.deploymentStrategy.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ default "0%" .Values.deploymentStrategy.rollingUpdate.maxSurge }}
+    {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "common.labels.matchLabels" . | nindent 8 }}
+        {{- if .Values.podLabels }}
+        {{- include "common.tplvalues.render" (dict "value" .Values.podLabels "context" $) | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: "{{ printf "%s|%s" (.Files.Get "files/consumer.go" | sha256sum) (.Files.Get "files/go.mod" | sha256sum) | sha256sum }}"
+        {{- if .Values.podAnnotations }}
+        {{- include "common.tplvalues.render" (dict "value" .Values.podAnnotations "context" $) | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ if .Values.serviceAccount.create }}{{ include "common.names.fullname" . }}{{ else }}{{ .Values.serviceAccount.name | quote }}{{ end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 30 }}
+      {{- if or .Values.image.pullSecrets .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- end }}
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.tolerations }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      {{- end }}
+      {{- if .Values.affinity }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: source
+          configMap:
+            name: {{ include "common.names.fullname" . }}-source
+        - name: workdir
+          emptyDir: {}
+        {{- if .Values.volumes }}
+        {{- toYaml .Values.volumes | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: consumer
+          image: {{ include "common.images.image" (dict "imageRoot" .Values.image "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              mkdir -p /workspace /workspace/.cache/go-build /workspace/.cache/mod /workspace/go
+              cp /source/* /workspace/
+              cd /workspace
+              go mod download
+              go mod tidy
+              go build -o consumer ./
+              exec ./consumer \
+                -host "${RABBIT_HOST}" \
+                -port "${RABBIT_PORT}" \
+                -username "${RABBIT_USERNAME}" \
+                -password "${RABBIT_PASSWORD}" \
+                -queue "${RABBIT_QUEUE}" \
+                -queue-partitions "${RABBIT_QUEUE_PARTITIONS}" \
+                -messages "${RABBIT_MESSAGES}" \
+                -vhost "${RABBIT_VHOST}" \
+                -connection-timeout "${CONNECTION_TIMEOUT}"
+          env:
+            - name: RABBIT_HOST
+              value: "{{ .Values.rabbitmq.host }}"
+            - name: RABBIT_PORT
+              value: "{{ .Values.rabbitmq.port }}"
+            - name: RABBIT_USERNAME
+              value: "{{ .Values.rabbitmq.username }}"
+            - name: RABBIT_PASSWORD
+              value: "{{ .Values.rabbitmq.password }}"
+            - name: RABBIT_QUEUE
+              value: "{{ .Values.rabbitmq.queue }}"
+            - name: RABBIT_QUEUE_PARTITIONS
+              value: "{{ .Values.rabbitmq.queuePartitions }}"
+            - name: RABBIT_MESSAGES
+              value: "{{ .Values.rabbitmq.messages }}"
+            - name: RABBIT_VHOST
+              value: "{{ .Values.rabbitmq.vhost }}"
+            - name: CONNECTION_TIMEOUT
+              value: "{{ .Values.connectionTimeout }}"
+            {{- if .Values.extraEnvVars }}
+            {{- include "common.tplvalues.render" (dict "value" .Values.extraEnvVars "context" $) | nindent 12 }}
+            {{- end }}
+            - name: HOME
+              value: "/workspace"
+            - name: XDG_CACHE_HOME
+              value: "/workspace/.cache"
+            - name: GOCACHE
+              value: "/workspace/.cache/go-build"
+            - name: GOMODCACHE
+              value: "/workspace/.cache/mod"
+            - name: GOPATH
+              value: "/workspace/go"
+          {{- if or .Values.extraEnvVarsCM .Values.extraEnvVarsSecret }}
+          envFrom:
+            {{- if .Values.extraEnvVarsCM }}
+            - configMapRef:
+                name: {{ .Values.extraEnvVarsCM }}
+            {{- end }}
+            {{- if .Values.extraEnvVarsSecret }}
+            - secretRef:
+                name: {{ .Values.extraEnvVarsSecret }}
+            {{- end }}
+          {{- end }}
+          volumeMounts:
+            - name: source
+              mountPath: /source
+            - name: workdir
+              mountPath: /workspace
+            {{- if .Values.volumeMounts }}
+            {{- toYaml .Values.volumeMounts | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          {{- end }}
+
+
